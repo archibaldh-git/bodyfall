@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Caveat:wght@400&display=swap" rel="stylesheet">
-<script src="https://www.youtube.com/iframe_api"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body {
@@ -28,68 +27,34 @@ canvas {
 </head>
 <body>
 <canvas id="c" width="1920" height="1080"></canvas>
-<!-- YouTube player off-screen — needs real dimensions to init properly -->
-<div id="yt-player" style="position:fixed;left:-9999px;top:-9999px;width:200px;height:200px;pointer-events:none;"></div>
 <script>
 
 // ===== YOUTUBE AUDIO =====
+// Uses a direct embed iframe created synchronously inside the START click
+// handler, so the browser's autoplay permission is inherited immediately.
+// No async IFrame API — that approach loses the user-gesture window.
 const YT_VIDEO_ID = '47yuiPK01kg';
-let ytPlayer     = null;
-let ytReady      = false;
-let ytMuted      = false;
-let ytPending    = false;  // play queued before player was ready
-
-// Called automatically by the YouTube IFrame API once it loads.
-// The player div must have real dimensions — YouTube refuses to init
-// inside a 1×1 or opacity:0 element. We hide it off-screen instead.
-function onYouTubeIframeAPIReady() {
-  ytPlayer = new YT.Player('yt-player', {
-    height: '200', width: '200',
-    videoId: YT_VIDEO_ID,
-    playerVars: {
-      autoplay: 0,
-      loop: 1,
-      playlist: YT_VIDEO_ID,  // required for loop param to work
-      controls: 0,
-      disablekb: 1,
-      fs: 0,
-      modestbranding: 1,
-      rel: 0,
-      iv_load_policy: 3,
-    },
-    events: {
-      onReady: () => {
-        ytReady = true;
-        // If START was clicked before the API finished loading, play now
-        if (ytPending && !ytMuted) { ytPlayer.playVideo(); ytPending = false; }
-      },
-      onStateChange: (e) => {
-        // Fallback loop in case playlist loop param doesn't fire
-        if (e.data === YT.PlayerState.ENDED) {
-          ytPlayer.seekTo(0);
-          ytPlayer.playVideo();
-        }
-      }
-    }
-  });
-}
+let ytIframe = null;
+let ytMuted  = false;
 
 function musicPlay() {
-  if (ytMuted) return;
-  if (ytReady && ytPlayer) { ytPlayer.playVideo(); }
-  else { ytPending = true; }  // will fire once onReady triggers
+  if (ytMuted || ytIframe) return;
+  ytIframe = document.createElement('iframe');
+  ytIframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:320px;height:180px;border:0;';
+  ytIframe.allow        = 'autoplay; encrypted-media';
+  ytIframe.setAttribute('allowfullscreen', '');
+  // autoplay=1 starts immediately; loop=1+playlist loops forever
+  ytIframe.src = 'https://www.youtube.com/embed/' + YT_VIDEO_ID
+               + '?autoplay=1&loop=1&playlist=' + YT_VIDEO_ID
+               + '&controls=0&modestbranding=1&rel=0&iv_load_policy=3';
+  document.body.appendChild(ytIframe);
 }
 function musicPause() {
-  ytPending = false;
-  if (ytReady && ytPlayer) ytPlayer.pauseVideo();
+  if (ytIframe) { ytIframe.src = ''; ytIframe.remove(); ytIframe = null; }
 }
 function musicToggleMute() {
   ytMuted = !ytMuted;
-  if (ytMuted) {
-    musicPause();
-  } else {
-    musicPlay();
-  }
+  ytMuted ? musicPause() : musicPlay();
 }
 
 // ===== IMAGE LOADING =====
