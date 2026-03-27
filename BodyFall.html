@@ -30,31 +30,31 @@ canvas {
 <script>
 
 // ===== YOUTUBE AUDIO =====
-// Uses a direct embed iframe created synchronously inside the START click
-// handler, so the browser's autoplay permission is inherited immediately.
-// No async IFrame API — that approach loses the user-gesture window.
+// Music is OFF by default. The ♪ button is the direct user gesture that
+// creates the iframe — guaranteeing autoplay permission is granted.
 const YT_VIDEO_ID = '47yuiPK01kg';
-let ytIframe = null;
-let ytMuted  = false;
+let ytIframe  = null;
+let ytPlaying = false;
 
-function musicPlay() {
-  if (ytMuted || ytIframe) return;
+function musicStart() {
+  if (ytIframe) return;
   ytIframe = document.createElement('iframe');
   ytIframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:320px;height:180px;border:0;';
-  ytIframe.allow        = 'autoplay; encrypted-media';
+  ytIframe.allow = 'autoplay; encrypted-media';
   ytIframe.setAttribute('allowfullscreen', '');
-  // autoplay=1 starts immediately; loop=1+playlist loops forever
   ytIframe.src = 'https://www.youtube.com/embed/' + YT_VIDEO_ID
                + '?autoplay=1&loop=1&playlist=' + YT_VIDEO_ID
                + '&controls=0&modestbranding=1&rel=0&iv_load_policy=3';
   document.body.appendChild(ytIframe);
+  ytPlaying = true;
 }
-function musicPause() {
+function musicStop() {
   if (ytIframe) { ytIframe.src = ''; ytIframe.remove(); ytIframe = null; }
+  ytPlaying = false;
 }
-function musicToggleMute() {
-  ytMuted = !ytMuted;
-  ytMuted ? musicPause() : musicPlay();
+function musicToggle() {
+  // This IS the user gesture — iframe created right here, autoplay works
+  ytPlaying ? musicStop() : musicStart();
 }
 
 // ===== IMAGE LOADING =====
@@ -716,7 +716,7 @@ function renderGame() {
 
   // Mute/unmute toggle button
   const {x: mx, y: my, w: mw, h: mh} = MUTE_BTN;
-  drawBtn(ytMuted ? '♪ OFF' : '♪ ON', mx, my, mw, mh, 18);
+  drawBtn(ytPlaying ? '♪ ON' : '♪ OFF', mx, my, mw, mh, 18);
 }
 
 // ===== START SCREEN =====
@@ -774,21 +774,20 @@ canvas.addEventListener('mousedown', e => {
 
   if (gameState === 'start') {
     gameState = 'playing';
-    musicPlay();   // user gesture here satisfies browser autoplay policy
     return;
   }
 
-  // Mute toggle button
+  // ♪ music toggle — iframe created HERE so autoplay permission is direct
   const {x: mx, y: my, w: mw, h: mh} = MUTE_BTN;
   if (pos.x >= mx && pos.x <= mx+mw && pos.y >= my && pos.y <= my+mh) {
-    musicToggleMute();
+    musicToggle();
     return;
   }
 
   const {x: bx, y: by, w: bw, h: bh} = STOP_BTN;
   if (pos.x >= bx && pos.x <= bx+bw && pos.y >= by && pos.y <= by+bh) {
     gameState = 'start';
-    musicPause();
+    musicStop();
     resetGame();
     return;
   }
