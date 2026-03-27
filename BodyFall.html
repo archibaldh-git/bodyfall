@@ -28,20 +28,23 @@ canvas {
 </head>
 <body>
 <canvas id="c" width="1920" height="1080"></canvas>
-<!-- Hidden 1×1 YouTube player — audio only, no visible UI -->
-<div id="yt-player" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;"></div>
+<!-- YouTube player off-screen — needs real dimensions to init properly -->
+<div id="yt-player" style="position:fixed;left:-9999px;top:-9999px;width:200px;height:200px;pointer-events:none;"></div>
 <script>
 
 // ===== YOUTUBE AUDIO =====
-const YT_VIDEO_ID = '0DYHlFks-Ps';
-let ytPlayer = null;
-let ytReady  = false;
-let ytMuted  = false;
+const YT_VIDEO_ID = '47yuiPK01kg';
+let ytPlayer     = null;
+let ytReady      = false;
+let ytMuted      = false;
+let ytPending    = false;  // play queued before player was ready
 
-// Called automatically by the YouTube IFrame API once it loads
+// Called automatically by the YouTube IFrame API once it loads.
+// The player div must have real dimensions — YouTube refuses to init
+// inside a 1×1 or opacity:0 element. We hide it off-screen instead.
 function onYouTubeIframeAPIReady() {
   ytPlayer = new YT.Player('yt-player', {
-    height: '1', width: '1',
+    height: '200', width: '200',
     videoId: YT_VIDEO_ID,
     playerVars: {
       autoplay: 0,
@@ -52,12 +55,16 @@ function onYouTubeIframeAPIReady() {
       fs: 0,
       modestbranding: 1,
       rel: 0,
-      iv_load_policy: 3,      // hide annotations
+      iv_load_policy: 3,
     },
     events: {
-      onReady: () => { ytReady = true; },
+      onReady: () => {
+        ytReady = true;
+        // If START was clicked before the API finished loading, play now
+        if (ytPending && !ytMuted) { ytPlayer.playVideo(); ytPending = false; }
+      },
       onStateChange: (e) => {
-        // Fallback loop: if the video ends, restart immediately
+        // Fallback loop in case playlist loop param doesn't fire
         if (e.data === YT.PlayerState.ENDED) {
           ytPlayer.seekTo(0);
           ytPlayer.playVideo();
@@ -68,18 +75,20 @@ function onYouTubeIframeAPIReady() {
 }
 
 function musicPlay() {
-  if (ytReady && ytPlayer && !ytMuted) ytPlayer.playVideo();
+  if (ytMuted) return;
+  if (ytReady && ytPlayer) { ytPlayer.playVideo(); }
+  else { ytPending = true; }  // will fire once onReady triggers
 }
 function musicPause() {
+  ytPending = false;
   if (ytReady && ytPlayer) ytPlayer.pauseVideo();
 }
 function musicToggleMute() {
   ytMuted = !ytMuted;
-  if (!ytReady || !ytPlayer) return;
   if (ytMuted) {
-    ytPlayer.pauseVideo();
+    musicPause();
   } else {
-    ytPlayer.playVideo();
+    musicPlay();
   }
 }
 
