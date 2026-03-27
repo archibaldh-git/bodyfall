@@ -29,33 +29,6 @@ canvas {
 <canvas id="c" width="1920" height="1080"></canvas>
 <script>
 
-// ===== YOUTUBE AUDIO =====
-// Music is OFF by default. The ♪ button is the direct user gesture that
-// creates the iframe — guaranteeing autoplay permission is granted.
-const YT_VIDEO_ID = '47yuiPK01kg';
-let ytIframe  = null;
-let ytPlaying = false;
-
-function musicStart() {
-  if (ytIframe) return;
-  ytIframe = document.createElement('iframe');
-  ytIframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:320px;height:180px;border:0;';
-  ytIframe.allow = 'autoplay; encrypted-media';
-  ytIframe.setAttribute('allowfullscreen', '');
-  ytIframe.src = 'https://www.youtube.com/embed/' + YT_VIDEO_ID
-               + '?autoplay=1&loop=1&playlist=' + YT_VIDEO_ID
-               + '&controls=0&modestbranding=1&rel=0&iv_load_policy=3';
-  document.body.appendChild(ytIframe);
-  ytPlaying = true;
-}
-function musicStop() {
-  if (ytIframe) { ytIframe.src = ''; ytIframe.remove(); ytIframe = null; }
-  ytPlaying = false;
-}
-function musicToggle() {
-  // This IS the user gesture — iframe created right here, autoplay works
-  ytPlaying ? musicStop() : musicStart();
-}
 
 // ===== IMAGE LOADING =====
 const PART_DATA = {
@@ -122,7 +95,7 @@ const NODE_RADIUS = 16;
 const TRAIL_LEN  = 4;
 // Buttons
 const STOP_BTN  = {x: W - 130, y: 24, w: 100, h: 38};
-const MUTE_BTN  = {x: W - 246, y: 24, w:  90, h: 38};
+
 const START_BTN = {x: W/2 - 110, y: 800, w: 220, h: 65};
 
 // ===== PART ORDER (back → front) =====
@@ -209,7 +182,8 @@ let grabbedNode  = null;
 let mouseWorld   = {x: 0, y: 0};
 let prevMouse    = {x: 0, y: 0};
 let trail        = [];
-let prevTorsoAngle = null;   // for anti-spin
+let prevTorsoAngle    = null;  // for anti-spin
+let cumulativeRotation = 0;   // total rotation since last reset — cap at 1 turn
 let simFrame       = 0;       // frame counter for throw grace period
 let releaseFrame   = -999;    // frame on which user last released body
 
@@ -229,7 +203,8 @@ function resetGame() {
   waveDuration   = 420 + Math.random() * 380;
   grabbedNode    = null;
   trail          = [];
-  prevTorsoAngle = null;
+  prevTorsoAngle    = null;
+  cumulativeRotation = 0;
   simFrame       = 0;
   releaseFrame   = -999;
   faceShufflePool = [];  // reset face shuffle so game starts fresh
@@ -298,21 +273,20 @@ function solveAngles() {
     A.y = K.y + (-uux) * ll;
   }
 
-  // ── Hip forward-only constraint: cross(neck→hip, hip→knee) >= 0 ──────────
-  // Prevents legs from folding BACKWARD (behind the torso).
-  // Forward fold (legs coming up toward chest) has cross > 0 in natural pose.
-  // When cross < 0, snap knee to the perpendicular on the forward side.
-  for (const [nkName, hipName, kneeName] of [['neck','rHip','rKnee'],['neck','lHip','lKnee']]) {
-    const Nk = N[nkName], H = N[hipName], K = N[kneeName];
-    if (!Nk||!H||!K||K===grabbedNode) continue;
-    const ux = H.x-Nk.x, uy = H.y-Nk.y, ul = Math.sqrt(ux*ux+uy*uy)||1;
-    const uux = ux/ul, uuy = uy/ul;
-    const lx = K.x-H.x, ly = K.y-H.y, ll = Math.sqrt(lx*lx+ly*ly)||1;
-    const cross = uux*(ly/ll) - uuy*(lx/ll);
-    if (cross >= 0) continue;  // forward side — allowed
-    // Snap knee to forward perpendicular: (-uuy, uux) direction from hip
-    K.x = H.x + (-uuy) * ll;
-    K.y = H.y + ( uux) * ll;
+  // ── World-space knee gravity bias: knees must hang BELOW their hips ────────
+  // Replaces the torso-relative cross-product constraint that caused "running"
+  // (perpendicular snaps created horizontal→gravity→horizontal circular forces).
+  // This check is world-space and gravity-aligned so there is no circular feedback.
+  for (const [hipName, kneeName] of [['rHip','rKnee'],['lHip','lKnee']]) {
+    const H = N[hipName], K = N[kneeName];
+    if (!H||!K||K===grabbedNode) continue;
+    if (K.y < H.y) {
+      // Knee is above the hip — reflect it to be the same distance below
+      const dy = H.y - K.y;
+      const correction = dy * 0.6;   // 60% correction per solver pass — firm but not rigid
+      K.y  += correction;
+      K.py += correction;            // kill the upward velocity component too
+    }
   }
 }
 
@@ -402,7 +376,30 @@ function restoreLegs() {
   }
 }
 
-// ── Anti-spin: damp rotational (tangential) velocity when torso spins fast ──
+// ── Pose restoration: gently return body to upright during freefall ─────────
+// RESTORE values are tiny (2–3%/frame) so collision forces easily override
+// them. Both position AND previous-position are moved together so there is
+// zero phantom velocity — no oscillation or jitter.
+function restorePose() {
+  // Only gently upright the torso — legs are left to gravity + pendulum physics.
+  const nk = N.neck;
+  if (!nk || nk === grabbedNode) return;
+  // Skip entirely when the body is nearly stationary — prevents the nudge
+  // from propagating through sticks and jolting a resting body.
+  const bodySpd2 = (nk.x-nk.px)**2 + (nk.y-nk.py)**2;
+  if (bodySpd2 < 1.0) return;
+  const UPRIGHT_R = 0.012;  // very gentle — collision forces easily override
+  const hmx = (N.rHip.x + N.lHip.x) / 2;
+  const hmy = (N.rHip.y + N.lHip.y) / 2;
+  const tLen = Math.hypot(nk.x - hmx, nk.y - hmy) || 1;
+  // Nudge neck toward directly above hip midpoint at same torso length
+  const dx = (hmx - nk.x) * UPRIGHT_R;
+  const dy = (hmy - tLen - nk.y) * UPRIGHT_R;
+  nk.x += dx; nk.px += dx;
+  nk.y += dy; nk.py += dy;
+}
+
+// ── Anti-spin: damp rotation, hard-stop after 1 full revolution ────────────
 function applyAntiSpin() {
   const hmx = (N.rHip.x + N.lHip.x) / 2;
   const hmy = (N.rHip.y + N.lHip.y) / 2;
@@ -410,18 +407,24 @@ function applyAntiSpin() {
 
   if (prevTorsoAngle !== null) {
     const dA = normAngle(curA - prevTorsoAngle);
-    const MAX_SPIN = 0.025; // tighter: damp sooner
+    cumulativeRotation += dA;
 
-    if (Math.abs(dA) > MAX_SPIN) {
-      // Compute body centre of mass
+    const MAX_SPIN   = 0.025;
+    // Over-rotated = body has done more than ~300° since last reset
+    const overRotated = Math.abs(cumulativeRotation) > Math.PI * 1.8;
+    const spinningFast = Math.abs(dA) > MAX_SPIN;
+
+    if (overRotated || spinningFast) {
       const nodes = Object.values(N);
       let cx = 0, cy = 0;
       for (const n of nodes) { cx += n.x; cy += n.y; }
       cx /= nodes.length; cy /= nodes.length;
 
       const spinDir = Math.sign(dA);
-      const excess  = Math.abs(dA) - MAX_SPIN;
-      const dampStr = Math.min(0.90, excess / MAX_SPIN) * 0.85; // stronger damp
+      // Hard-stop when over-rotated; proportional damp when just spinning fast
+      const dampStr = overRotated
+        ? 0.98
+        : Math.min(0.90, (Math.abs(dA) - MAX_SPIN) / MAX_SPIN) * 0.85;
 
       for (const n of nodes) {
         if (n === grabbedNode) continue;
@@ -429,17 +432,18 @@ function applyAntiSpin() {
         const r2 = rx*rx + ry*ry;
         if (r2 < 4) continue;
         const r  = Math.sqrt(r2);
-        // Tangent direction aligned with spin
         const tx = -spinDir * ry / r;
         const ty =  spinDir * rx / r;
         const vx = n.x - n.px, vy = n.y - n.py;
-        const vt = vx*tx + vy*ty;  // tangential speed in spin direction
+        const vt = vx*tx + vy*ty;
         if (vt > 0) {
-          // Remove the rotational component — leave linear (fall) velocity alone
           n.px += tx * vt * dampStr;
           n.py += ty * vt * dampStr;
         }
       }
+      // Once the spin has truly stopped after over-rotating, clear the counter
+      // so a fresh face collision can spin the body again from scratch
+      if (overRotated && Math.abs(dA) < 0.005) cumulativeRotation = 0;
     }
   }
   prevTorsoAngle = Math.atan2(
@@ -457,11 +461,13 @@ function physicsStep() {
     const vy = (n.y - n.py) * DAMPING;
     const spd2 = vx*vx + vy*vy;
     n.px = n.x; n.py = n.y;
-    // Velocity sleeping: if node is barely moving, zero out its velocity so
-    // constraint micro-corrections have nothing to oscillate against.
-    // Node still falls under gravity — just no carryover jitter.
-    if (spd2 < 0.25) {   // < 0.5 px/frame threshold — kill micro-oscillation
-      n.y += GRAVITY;
+    // Velocity sleeping: node is barely moving — apply gravity but keep
+    // velocity at ZERO (move both y and py) so there is no wake-up ping-pong.
+    // The old approach did n.y+=GRAVITY without touching n.py, which meant
+    // next frame velocity=GRAVITY=0.65 > threshold → woke up → jitter loop.
+    if (spd2 < 0.25) {
+      n.y  += GRAVITY;
+      n.py += GRAVITY;  // ← key fix: zero-velocity drift, no oscillation
       continue;
     }
     const scale = spd2 > MAX_VEL*MAX_VEL ? MAX_VEL / Math.sqrt(spd2) : 1;
@@ -502,9 +508,8 @@ function physicsStep() {
   }
 
   applyBoundaries();
-  // restoreLegs removed — spring caused micro-oscillation ("running look")
-  // Gravity alone returns legs to natural downward hang after any fold.
-  applyAntiSpin();   // damp spin AFTER all constraints settle
+  restorePose();     // gently return body to upright — override-able by collisions
+  applyAntiSpin();   // damp spin, hard-stop after 1 full revolution
 
   // ── Prevent body drifting upward on its own ──────────────────────────────
   // After a user throw, allow free upward motion for THROW_GRACE frames.
@@ -714,9 +719,6 @@ function renderGame() {
   const {x, y, w, h} = STOP_BTN;
   drawBtn('STOP', x, y, w, h, 22);
 
-  // Mute/unmute toggle button
-  const {x: mx, y: my, w: mw, h: mh} = MUTE_BTN;
-  drawBtn(ytPlaying ? '♪ ON' : '♪ OFF', mx, my, mw, mh, 18);
 }
 
 // ===== START SCREEN =====
@@ -777,17 +779,10 @@ canvas.addEventListener('mousedown', e => {
     return;
   }
 
-  // ♪ music toggle — iframe created HERE so autoplay permission is direct
-  const {x: mx, y: my, w: mw, h: mh} = MUTE_BTN;
-  if (pos.x >= mx && pos.x <= mx+mw && pos.y >= my && pos.y <= my+mh) {
-    musicToggle();
-    return;
-  }
 
   const {x: bx, y: by, w: bw, h: bh} = STOP_BTN;
   if (pos.x >= bx && pos.x <= bx+bw && pos.y >= by && pos.y <= by+bh) {
     gameState = 'start';
-    musicStop();
     resetGame();
     return;
   }
@@ -818,8 +813,9 @@ canvas.addEventListener('mousedown', e => {
       N[k].px = N[k].x;
       N[k].py = N[k].y;
     }
-    trail          = [];
-    prevTorsoAngle = null;
+    trail             = [];
+    prevTorsoAngle    = null;
+    cumulativeRotation = 0;
     releaseFrame   = -999;
   }
 });
