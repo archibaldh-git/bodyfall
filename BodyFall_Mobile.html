@@ -775,7 +775,7 @@ function renderStart() {
   ctx.fillText('FALL', W/2, 300);
   ctx.restore();
 
-  // Subtitle
+  // Subtitle — directly under the title
   ctx.save();
   ctx.textAlign    = 'center';
   ctx.textBaseline = 'top';
@@ -783,11 +783,11 @@ function renderStart() {
   ctx.shadowColor  = 'rgba(0,0,0,0.5)';
   ctx.shadowBlur   = 8;
   ctx.font         = '400 54px "Caveat", cursive';
-  ctx.fillText('an archie mindfuck', W/2, 1250);
+  ctx.fillText('an archie mindfuck', W/2, 530);
   ctx.restore();
 
   const {x: sx, y: sy, w: sw, h: sh} = START_BTN;
-  drawBtn('TAP TO PLAY', sx, sy, sw, sh, 44);
+  drawBtn('START', sx, sy, sw, sh, 44);
 }
 
 // ===== INPUT =====
