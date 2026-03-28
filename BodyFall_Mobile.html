@@ -99,7 +99,7 @@ const H          = 1920;
 const NODE_RADIUS = 16;
 const TRAIL_LEN  = 4;
 // Buttons
-const STOP_BTN  = {x: W - 140, y: 30, w: 110, h: 50};
+const STOP_BTN  = {x: W - 140, y: 40, w: 110, h: 50};
 
 const START_BTN = {x: W/2 - 140, y: 1350, w: 280, h: 80};
 
@@ -566,11 +566,11 @@ function nextFaceIndex() {
 }
 
 function getSpawnGap() {
-  // Max face radius = 165px (size 330). For only a few px of vertical overlap
-  // between consecutive rows: gap ≥ 2*165 - 5 = 325px.
+  // Max face radius = 165px (size 330). For ≤3px vertical overlap: gap ≥ 2*165-3 = 327px.
+  // Add extra buffer so even random size combos stay within a few pixels.
   return waveDense
-    ? 325 + Math.random() * 120   // 325–445 px  → ≤5 px overlap for largest faces
-    : 560 + Math.random() * 280;  // 560–840 px  → well-spaced in sparse sections
+    ? 340 + Math.random() * 100   // 340–440 px  → ≤3 px vertical overlap worst-case
+    : 580 + Math.random() * 260;  // 580–840 px  → clearly separated in sparse sections
 }
 
 function spawnGroup(worldY) {
@@ -631,7 +631,7 @@ function spawnGroup(worldY) {
     do {
       x = xMin + Math.random() * (xMax - xMin);
       tries++;
-    } while (tries < 35 && placed.some(p => Math.abs(p.x - x) < (p.size + size) / 2 - 3));
+    } while (tries < 35 && placed.some(p => Math.abs(p.x - x) < (p.size + size) / 2 - 4));
 
     placed.push({x, size});
     obstacles.push({img: FI[fi], x, y: worldY, size});
